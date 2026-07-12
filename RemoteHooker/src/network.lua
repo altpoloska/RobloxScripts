@@ -46,12 +46,12 @@ function network.init(packetCallback)
             if typeof(self) == "Instance" then
                 local className = self.ClassName
                 local isRemoteEvent = method == "FireServer"
-                    and className == "RemoteEvent"
+                and className == "RemoteEvent"
                 local isRemoteFunction = method == "InvokeServer"
-                    and className == "RemoteFunction"
+                and className == "RemoteFunction"
 
                 shouldCapture = (isRemoteEvent or isRemoteFunction)
-                    and not settings.shouldIgnore(self)
+                and not settings.shouldIgnore(self)
             end
 
             if shouldCapture then

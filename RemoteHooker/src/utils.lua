@@ -27,9 +27,9 @@ local function convertPathToGetService(path, forClipboard)
 
     local startIndex = 1
     if parts[1] == "game" then startIndex = 2 end
-    
-    if startIndex > #parts then 
-        return forClipboard and "game" or '<font color="#8BE9FD">game</font>' 
+
+    if startIndex > #parts then
+        return forClipboard and "game" or '<font color="#8BE9FD">game</font>'
     end
 
     if forClipboard then
@@ -48,7 +48,7 @@ function utils.serializeValue(val, indent, forClipboard, state)
     state = state or { visited = {}, depth = 0 }
     local t = typeof(val)
     forClipboard = forClipboard or false
-    
+
     local function color(text, colorHex)
         return forClipboard and text or ('<font color="' .. colorHex .. '">' .. text .. '</font>')
     end
@@ -111,14 +111,14 @@ end
 function utils.formatArgsTable(packet, forClipboard)
     forClipboard = forClipboard or false
     local fullPath = convertPathToGetService(packet.path, forClipboard)
-    
+
     local function color(text, colorHex)
         return forClipboard and text or ('<font color="' .. colorHex .. '">' .. text .. '</font>')
     end
 
     local lines = {}
     table.insert(lines, color("local", "#FF79C6") .. " " .. color("args", "#8BE9FD") .. " = {")
-    
+
     local argCount = packet.argCount or packet.args.n or #packet.args
     for i = 1, argCount do
         local arg = packet.args[i]
@@ -126,15 +126,15 @@ function utils.formatArgsTable(packet, forClipboard)
         local indexStr = color("[" .. i .. "]", "#FFB86C")
         table.insert(lines, "    " .. indexStr .. " = " .. formatted .. ",")
     end
-    
+
     table.insert(lines, "}")
     table.insert(lines, "")
-    
+
     local methodStr = color(packet.method, "#50FA7B")
     local unpackStr = color("table.unpack", "#50FA7B") .. "(" .. color("args", "#8BE9FD") .. ", " .. color("1", "#FFB86C") .. ", " .. color(tostring(argCount), "#FFB86C") .. ")"
-    
+
     table.insert(lines, fullPath .. ":" .. methodStr .. "(" .. unpackStr .. ")")
-    
+
     return table.concat(lines, "\n")
 end
 
@@ -153,13 +153,13 @@ function utils.getHexFromPacket(packet)
 end
 
 -- Для копирования (без тегов)
-function utils.generateCodeStr(packet) 
-    return utils.formatArgsTable(packet, true) 
+function utils.generateCodeStr(packet)
+    return utils.formatArgsTable(packet, true)
 end
 
 -- Для UI (с тегами)
-function utils.generateHighlightedCode(packet) 
-    return utils.formatArgsTable(packet, false) 
+function utils.generateHighlightedCode(packet)
+    return utils.formatArgsTable(packet, false)
 end
 
 function utils.findInstanceByPath(path)
