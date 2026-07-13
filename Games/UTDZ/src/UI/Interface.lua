@@ -28,8 +28,6 @@ function Interface.new(deps)
     end
 
     local mainTab = window:Tab({ Name = "Main" })
-    mainTab:Section("AFK playback: persistent while Play Macro is enabled")
-    mainTab:Section("End of game")
 
     local function makeAuto(name, key)
         local toggle
@@ -264,8 +262,6 @@ function Interface.new(deps)
             end
         end,
     })
-
-    macroTab:Section("Persistent playback")
 
     local playToggle
     playToggle = macroTab:Toggle({

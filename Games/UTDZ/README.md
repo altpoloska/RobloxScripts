@@ -46,3 +46,9 @@ luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./dist/MacroRecorder.lua
 - While enabled, playback remains armed across matches and waits for the recorded start wave.
 - Turning it off immediately stops playback and prevents further macro action remotes.
 - Auto Replay/Next/Leave remain controlled by their own independent toggles.
+
+## v2.4 minimal position randomization
+
+- Every `PlaceUnit` playback gets a random world-space X/Z offset with a total distance from `0.001` to `0.01` studs.
+- Recorded macro coordinates stay unchanged, so older macro files remain compatible.
+- Removed decorative section labels from the Main tab and kept only the live status label on the Macro tab.

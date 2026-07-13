@@ -262,8 +262,6 @@ function Interface.new(deps)
     end
 
     local mainTab = window:Tab({ Name = "Main" })
-    mainTab:Section("AFK playback: persistent while Play Macro is enabled")
-    mainTab:Section("End of game")
 
     local function makeAuto(name, key)
         local toggle
@@ -498,8 +496,6 @@ function Interface.new(deps)
             end
         end,
     })
-
-    macroTab:Section("Persistent playback")
 
     local playToggle
     playToggle = macroTab:Toggle({
@@ -889,6 +885,8 @@ local Config = {
     ReadyTimeout = 60,
     DispatchRetries = 3,
     DispatchRetryDelay = 0.25,
+    PositionRandomOffsetMin = 0.001,
+    PositionRandomOffsetMax = 0.01,
 }
 
 return Config
@@ -1153,6 +1151,23 @@ local Actions = require("Macro.Actions")
 local Player = {}
 Player.__index = Player
 
+local positionRng = Random.new()
+
+local function addPositionRandomOffset(cf)
+    local minOffset = tonumber(Config.PositionRandomOffsetMin) or 0.001
+    local maxOffset = tonumber(Config.PositionRandomOffsetMax) or 0.01
+    if minOffset < 0 or maxOffset < minOffset then return cf end
+
+    -- Random direction plus a guaranteed non-zero distance from the saved point.
+    local angle = positionRng:NextNumber(0, math.pi * 2)
+    local distance = positionRng:NextNumber(minOffset, maxOffset)
+    return cf + Vector3.new(
+        math.cos(angle) * distance,
+        0,
+        math.sin(angle) * distance
+    )
+end
+
 function Player.new(opts)
     opts = opts or {}
     return setmetatable({
@@ -1294,7 +1309,9 @@ function Player:Play(macro, options)
                     finish(false, ("Action #%d: %s"):format(entry.index, cfError))
                     return
                 end
-                ctx.cframe = cf
+                -- Keep the saved macro unchanged, but slightly vary the world-space
+                -- X/Z placement on every playback so coordinates are not identical.
+                ctx.cframe = addPositionRandomOffset(cf)
             end
 
             local success, dispatchError = false, nil

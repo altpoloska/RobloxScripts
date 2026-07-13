@@ -15,6 +15,8 @@ local Config = {
     ReadyTimeout = 60,
     DispatchRetries = 3,
     DispatchRetryDelay = 0.25,
+    PositionRandomOffsetMin = 0.001,
+    PositionRandomOffsetMax = 0.01,
 }
 
 return Config
