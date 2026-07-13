@@ -49,7 +49,10 @@ if setthreadidentity then
     pcall(setthreadidentity, 2)
 end
 
-ui.init({ onClose = network.shutdown })
+ui.init({
+    onClose = network.shutdown,
+    onRecordingChanged = network.setRecording,
+})
 local ok, err = network.init(ui.addPacket)
 if ok then
     print("[RemoteHooker] Loaded successfully")
@@ -133,6 +136,7 @@ local authorBadge
 local editButton
 
 local onClose
+local onRecordingChanged
 local connections = {}
 local sequence = 0
 local generation = 0
@@ -1246,6 +1250,9 @@ local function createGUI()
 
     connect(pauseButton.MouseButton1Click, function()
         UI.isRecording = not UI.isRecording
+        if onRecordingChanged then
+            pcall(onRecordingChanged, UI.isRecording)
+        end
         setTitleState(UI.isRecording)
         updateStatus(
             UI.isRecording and "Recording" or "Paused",
@@ -1299,7 +1306,11 @@ end
 function UI.init(options)
     options = options or {}
     onClose = options.onClose
+    onRecordingChanged = options.onRecordingChanged
     createGUI()
+    if onRecordingChanged then
+        pcall(onRecordingChanged, UI.isRecording)
+    end
     updateStatus("Recording", COLORS.green)
 end
 
@@ -1576,37 +1587,90 @@ local settings = {
     excludedPaths = {},
     blockedPaths = {},
     maxPackets = 500,
+    maxPendingPackets = 250,
+    captureCallingScript = true,
+    -- Stack collection is expensive; enable only while diagnosing a call.
+    captureTraceback = false,
 }
+
+local excludedPathCount = 0
+local blockedPathCount = 0
 
 local function safePath(remote)
     local ok, path = pcall(function() return remote:GetFullName() end)
     return ok and path or tostring(remote)
 end
 
-function settings.shouldIgnore(remote)
+function settings.getRemoteState(remote)
     local name = remote.Name
-    local path = safePath(remote)
-    if settings.excludedNames[name] or settings.excludedPaths[path] then return true end
-    for _, pattern in ipairs(settings.ignoredPathPatterns) do
-        local ok, matched = pcall(string.match, path, pattern)
-        if ok and matched then return true end
+    if settings.excludedNames[name] then
+        return true, false, nil
     end
-    return false
+
+    -- Avoid GetFullName entirely while no path-based rule is configured.
+    if excludedPathCount == 0
+        and blockedPathCount == 0
+        and #settings.ignoredPathPatterns == 0
+    then
+        return false, false, nil
+    end
+
+    local path = safePath(remote)
+    local ignored = settings.excludedPaths[path] == true
+
+    if not ignored then
+        for _, pattern in ipairs(settings.ignoredPathPatterns) do
+            local ok, matched = pcall(string.match, path, pattern)
+            if ok and matched then
+                ignored = true
+                break
+            end
+        end
+    end
+
+    return ignored, settings.blockedPaths[path] == true, path
+end
+
+function settings.shouldIgnore(remote)
+    local ignored = settings.getRemoteState(remote)
+    return ignored
 end
 
 function settings.isBlocked(remote)
-    return settings.blockedPaths[safePath(remote)] == true
+    local _, blocked = settings.getRemoteState(remote)
+    return blocked
 end
 
-function settings.excludeName(name) settings.excludedNames[name] = true end
-function settings.excludePath(path) settings.excludedPaths[path] = true end
-function settings.setBlocked(path, value) settings.blockedPaths[path] = value and true or nil end
+function settings.excludeName(name)
+    settings.excludedNames[name] = true
+end
+
+function settings.excludePath(path)
+    if not settings.excludedPaths[path] then
+        excludedPathCount = excludedPathCount + 1
+        settings.excludedPaths[path] = true
+    end
+end
+
+function settings.setBlocked(path, value)
+    local wasBlocked = settings.blockedPaths[path] == true
+    local shouldBlock = value == true
+    if wasBlocked ~= shouldBlock then
+        blockedPathCount = blockedPathCount + (shouldBlock and 1 or -1)
+        settings.blockedPaths[path] = shouldBlock and true or nil
+    end
+end
+
 function settings.isPathBlocked(path) return settings.blockedPaths[path] == true end
 function settings.resetExclusions()
     table.clear(settings.excludedNames)
     table.clear(settings.excludedPaths)
+    excludedPathCount = 0
 end
-function settings.resetBlocks() table.clear(settings.blockedPaths) end
+function settings.resetBlocks()
+    table.clear(settings.blockedPaths)
+    blockedPathCount = 0
+end
 
 return settings
 
@@ -1619,18 +1683,30 @@ local network = {}
 local oldNamecall
 local isActive = false
 local initialized = false
+local recordingEnabled = true
 local onPacket = nil
 local decoder = nil
 local callDepth = 0
+
+-- Unblocked calls are processed in batches outside __namecall. Using indices
+-- avoids table.remove(1), which would shift the entire queue on every packet.
+local pendingPackets = {}
+local queueHead = 1
+local queueTail = 0
+local drainScheduled = false
 
 function network.setDecoder(callback)
     assert(callback == nil or type(callback) == "function", "decoder must be a function or nil")
     decoder = callback
 end
 
+function network.setRecording(value)
+    recordingEnabled = value ~= false
+end
+
 local function captureCallMetadata()
     local callingScript
-    if type(getcallingscript) == "function" then
+    if settings.captureCallingScript and type(getcallingscript) == "function" then
         local ok, scriptValue = pcall(getcallingscript)
         if ok and scriptValue ~= nil then
             if typeof(scriptValue) == "Instance" then
@@ -1645,7 +1721,7 @@ local function captureCallMetadata()
     end
 
     local traceback
-    if debug and type(debug.traceback) == "function" then
+    if settings.captureTraceback and debug and type(debug.traceback) == "function" then
         local ok, trace = pcall(function()
             return debug.traceback(nil, 3)
         end)
@@ -1661,7 +1737,6 @@ local function makePacket(remote, method, rawArgs, blocked, callingScript, trace
     local okPath, path = pcall(function() return remote:GetFullName() end)
     local okName, name = pcall(function() return remote.Name end)
     local okExp, exp = pcall(function() return utils.instanceExpression(remote, true) end)
-
     local argsOk, snapshot = pcall(utils.snapshotArgs, rawArgs, decoder)
 
     return {
@@ -1682,6 +1757,66 @@ local function makePacket(remote, method, rawArgs, blocked, callingScript, trace
     }
 end
 
+local function dispatchPacket(remote, method, rawArgs, blocked, callingScript, traceback)
+    if not isActive or type(onPacket) ~= "function" then
+        return
+    end
+
+    callDepth = callDepth + 1
+    local ok, err = pcall(function()
+        onPacket(makePacket(remote, method, rawArgs, blocked, callingScript, traceback))
+    end)
+    callDepth = callDepth - 1
+
+    if not ok then
+        warn("[Network] Failed to capture packet:", err)
+    end
+end
+
+local function drainPacketQueue()
+    while queueHead <= queueTail do
+        local item = pendingPackets[queueHead]
+        pendingPackets[queueHead] = nil
+        queueHead = queueHead + 1
+
+        if item then
+            dispatchPacket(
+                item.remote,
+                item.method,
+                item.args,
+                false,
+                item.callingScript,
+                item.traceback
+            )
+        end
+    end
+
+    queueHead = 1
+    queueTail = 0
+    drainScheduled = false
+end
+
+local function enqueuePacket(remote, method, rawArgs, callingScript, traceback)
+    local maxPending = settings.maxPendingPackets or settings.maxPackets or 500
+    if queueTail - queueHead + 1 >= maxPending then
+        return
+    end
+
+    queueTail = queueTail + 1
+    pendingPackets[queueTail] = {
+        remote = remote,
+        method = method,
+        args = rawArgs,
+        callingScript = callingScript,
+        traceback = traceback,
+    }
+
+    if not drainScheduled then
+        drainScheduled = true
+        task.defer(drainPacketQueue)
+    end
+end
+
 function network.init(packetCallback)
     if initialized then return false, "network hook is already initialized" end
     if type(packetCallback) ~= "function" then return false, "packet callback is required" end
@@ -1699,76 +1834,51 @@ function network.init(packetCallback)
             end
 
             local method = getnamecallmethod()
-            local packedArgs = table.pack(...)
 
             if checkcaller and checkcaller() then
                 return oldNamecall(self, ...)
             end
 
-            local shouldCapture = false
+            -- Do not allocate table.pack for unrelated namecalls. This is the
+            -- hottest path and should forward with the original varargs.
+            local isRemoteCall = false
             if typeof(self) == "Instance" then
                 local className = self.ClassName
-                local isRemoteEvent = method == "FireServer"
-                and className == "RemoteEvent"
-                local isRemoteFunction = method == "InvokeServer"
-                and className == "RemoteFunction"
-
-                shouldCapture = (isRemoteEvent or isRemoteFunction)
-                and not settings.shouldIgnore(self)
+                isRemoteCall = (method == "FireServer" and className == "RemoteEvent")
+                    or (method == "InvokeServer" and className == "RemoteFunction")
             end
 
-            if shouldCapture then
-                -- These must be collected on the intercepted thread before task.defer,
-                -- otherwise both APIs would describe the deferred callback instead.
-                local callingScript, traceback = captureCallMetadata()
-                local blocked = settings.isBlocked and settings.isBlocked(self)
-                
-                -- Если пакет НЕ заблокирован, мы отдаем его UI асинхронно, 
-                -- чтобы не тормозить игру и обмануть замеры таймингов (Timing Checks)
-                if not blocked then
-                    -- Делаем мгновенную легкую копию аргументов
-                    local argsFastCopy = { n = packedArgs.n }
-                    for i = 1, packedArgs.n do argsFastCopy[i] = packedArgs[i] end
-
-                    task.defer(function()
-                        callDepth = callDepth + 1
-                        local captureOk, captureError = pcall(function()
-                            onPacket(makePacket(
+            if isRemoteCall then
+                -- Resolve the path once for exclusions and blocking.
+                local ignored, blocked = settings.getRemoteState(self)
+                if not ignored then
+                    if blocked then
+                        if recordingEnabled then
+                            local packedArgs = table.pack(...)
+                            local callingScript, traceback = captureCallMetadata()
+                            dispatchPacket(
                                 self,
                                 method,
-                                argsFastCopy,
-                                false,
+                                packedArgs,
+                                true,
                                 callingScript,
                                 traceback
-                            ))
-                        end)
-                        callDepth = callDepth - 1
-                        if not captureOk then
-                            warn("[Network] Failed to capture packet:", captureError)
+                            )
                         end
-                    end)
-                else
-                    -- Если пакет заблокирован, обрабатываем его сразу и убиваем
-                    callDepth = callDepth + 1
-                    pcall(function()
-                        onPacket(makePacket(
-                            self,
-                            method,
-                            packedArgs,
-                            true,
-                            callingScript,
-                            traceback
-                        ))
-                    end)
-                    callDepth = callDepth - 1
-                    
-                    setnamecallmethod(method)
-                    return nil
+
+                        setnamecallmethod(method)
+                        return nil
+                    elseif recordingEnabled then
+                        -- Only captured calls pay for argument copying and metadata.
+                        local packedArgs = table.pack(...)
+                        local callingScript, traceback = captureCallMetadata()
+                        enqueuePacket(self, method, packedArgs, callingScript, traceback)
+                    end
                 end
             end
 
             setnamecallmethod(method)
-            return oldNamecall(self, table.unpack(packedArgs, 1, packedArgs.n))
+            return oldNamecall(self, ...)
         end)
     end)
 
@@ -1780,13 +1890,18 @@ function network.init(packetCallback)
 
     oldNamecall = result
     initialized = true
-    print("[Network] Async Hook installed successfully.")
+    print("[Network] Batched async hook installed successfully.")
     return true
 end
 
 function network.shutdown()
     isActive = false
+    recordingEnabled = false
     onPacket = nil
+    table.clear(pendingPackets)
+    queueHead = 1
+    queueTail = 0
+    drainScheduled = false
     print("[Network] Capture disabled.")
 end
 

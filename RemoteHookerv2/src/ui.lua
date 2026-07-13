@@ -69,6 +69,7 @@ local authorBadge
 local editButton
 
 local onClose
+local onRecordingChanged
 local connections = {}
 local sequence = 0
 local generation = 0
@@ -1182,6 +1183,9 @@ local function createGUI()
 
     connect(pauseButton.MouseButton1Click, function()
         UI.isRecording = not UI.isRecording
+        if onRecordingChanged then
+            pcall(onRecordingChanged, UI.isRecording)
+        end
         setTitleState(UI.isRecording)
         updateStatus(
             UI.isRecording and "Recording" or "Paused",
@@ -1235,7 +1239,11 @@ end
 function UI.init(options)
     options = options or {}
     onClose = options.onClose
+    onRecordingChanged = options.onRecordingChanged
     createGUI()
+    if onRecordingChanged then
+        pcall(onRecordingChanged, UI.isRecording)
+    end
     updateStatus("Recording", COLORS.green)
 end
 

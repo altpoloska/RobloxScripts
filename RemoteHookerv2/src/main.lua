@@ -5,7 +5,10 @@ if setthreadidentity then
     pcall(setthreadidentity, 2)
 end
 
-ui.init({ onClose = network.shutdown })
+ui.init({
+    onClose = network.shutdown,
+    onRecordingChanged = network.setRecording,
+})
 local ok, err = network.init(ui.addPacket)
 if ok then
     print("[RemoteHooker] Loaded successfully")

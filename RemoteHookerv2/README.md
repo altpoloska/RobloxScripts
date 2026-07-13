@@ -27,7 +27,12 @@ Remote-call inspector for authorized debugging of your own Roblox experiences.
 - Includes a clickable author badge and a visible resize-corner indicator.
 - Replay uses generated editable code and displays errors.
 - Bounded 500-packet history with accurate total/retained counters.
-- Calling-script and traceback display when supported.
+- Calling-script and optional traceback display when supported.
+- Optimized hot path: unrelated namecalls are forwarded without `table.pack` allocations.
+- Unblocked captures are drained through a bounded batched queue instead of one deferred task per packet.
+- Pausing recording disables packet copies, metadata collection, snapshots, and UI dispatch while preserving blocking rules.
+- Path lookup is skipped until a path exclusion, pattern, or block is configured.
+- `captureTraceback` defaults to `false` because stack collection is expensive; enable it in `src/settings.lua` only while diagnosing.
 - Original direct `__namecall` forwarding with `setnamecallmethod(method)` and no `pcall` around `oldNamecall`.
 - Hook and GUI connection cleanup on close.
 
