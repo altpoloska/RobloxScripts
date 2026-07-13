@@ -1,53 +1,66 @@
--- Конструкторы действий макроса в целевом формате.
--- Каждый билдер возвращает таблицу без поля Time -- Time добавляет Recorder.
-
 local Actions = {}
 
--- CFrame -> "x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22"
 function Actions.encodeCFrame(cf)
-	local c = { cf:GetComponents() }
-	for i, v in ipairs(c) do
-		c[i] = tostring(v)
-	end
-	return table.concat(c, ", ")
+    assert(typeof(cf) == "CFrame", "Expected CFrame")
+    local values = { cf:GetComponents() }
+    for i, value in ipairs(values) do
+        values[i] = string.format("%.9g", value)
+    end
+    return table.concat(values, ", ")
 end
 
--- Строка Pos -> CFrame
 function Actions.decodeCFrame(pos)
-	local nums = {}
-	for token in string.gmatch(pos, "[^,%s]+") do
-		table.insert(nums, tonumber(token))
-	end
-	return CFrame.new(table.unpack(nums))
+    if type(pos) ~= "string" then
+        return nil, "Pos must be a string"
+    end
+
+    local values = {}
+    for token in pos:gmatch("[^,%s]+") do
+        local value = tonumber(token)
+        if not value then
+            return nil, "Pos contains a non-number: " .. token
+        end
+        values[#values + 1] = value
+    end
+
+    if #values ~= 12 then
+        return nil, ("CFrame must contain 12 numbers, received %d"):format(#values)
+    end
+
+    return CFrame.new(table.unpack(values))
 end
 
-function Actions.PlaceUnit(unitName, cframe)
-	return { Type = "PlaceUnit", Unit = unitName, Pos = Actions.encodeCFrame(cframe) }
+function Actions.PlaceUnit(unitName, cframe, label)
+    return {
+        Type = "PlaceUnit",
+        Unit = unitName,
+        Label = label,
+        Pos = Actions.encodeCFrame(cframe),
+    }
 end
 
-function Actions.UpgradeUnit(unitLabel) -- unitLabel = "Bulmo - 1"
-	return { Type = "UpgradeUnit", Pos = unitLabel }
+function Actions.UpgradeUnit(label)
+    return { Type = "UpgradeUnit", Pos = label }
 end
 
-function Actions.ChangePriority(unitLabel, prio)
-	return { Type = "ChangePriority", Prio = prio, Pos = unitLabel }
+function Actions.ChangePriority(label, priority)
+    return { Type = "ChangePriority", Prio = priority, Pos = label }
 end
 
-function Actions.UseAbility(unitLabel, abilityIndex)
-	return { Type = "UseAbility", Abi = abilityIndex, Pos = unitLabel }
+function Actions.UseAbility(label, abilityIndex)
+    return { Type = "UseAbility", Abi = abilityIndex, Pos = label }
 end
 
-function Actions.ConfirmTowerLink(unitLabel)
-	return { Type = "ConfirmTowerLink", Pos = unitLabel }
+function Actions.ConfirmTowerLink(label)
+    return { Type = "ConfirmTowerLink", Pos = label }
 end
 
--- Расширение сверх example.json: в игре есть SellUnit.
-function Actions.SellUnit(unitLabel)
-	return { Type = "SellUnit", Pos = unitLabel }
+function Actions.SellUnit(label)
+    return { Type = "SellUnit", Pos = label }
 end
 
 function Actions.VoteSkip()
-	return { Type = "VoteSkip" }
+    return { Type = "VoteSkip" }
 end
 
 return Actions

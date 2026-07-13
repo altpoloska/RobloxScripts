@@ -1,11 +1,20 @@
 local Config = {
-	GameSpeed = 1.5,                       -- записывается в макрос как "Game Speed"
-	ToggleKey = Enum.KeyCode.RightControl, -- показать/скрыть окно
-	RecordKey = Enum.KeyCode.F6,           -- быстрый старт/стоп записи
-	PlayKey = Enum.KeyCode.F7,             -- быстрый старт воспроизведения
-	FolderName = "PoloskaMacros",          -- папка для сохранённых макросов
-	RestartVoteDelay = 1,                  -- пауза (сек) после vote replay/next перед авто-стартом
-	RestartPlayDelay = 2,                  -- пауза (сек) перед перезапуском play macro
+    ToggleKey = Enum.KeyCode.RightControl,
+    RecordKey = Enum.KeyCode.F6,
+    PlayKey = Enum.KeyCode.F7,
+    FolderName = "PoloskaMacros",
+
+    DefaultGameSpeed = 1.5,
+    SupportedSpeeds = { 1, 1.5 },
+    FormatVersion = 2,
+    TimeBasis = "game_seconds",
+
+    UnitCaptureTimeout = 2,
+    PendingResolveTimeout = 3,
+    WaveWaitTimeout = 300,
+    ReadyTimeout = 60,
+    DispatchRetries = 3,
+    DispatchRetryDelay = 0.25,
 }
 
 return Config

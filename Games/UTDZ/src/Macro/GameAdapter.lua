@@ -1,277 +1,191 @@
--- Всё гейм-специфичное в одном месте: ремоуты, реестр юнитов,
--- автозапись через hookmetamethod и воспроизведение (Dispatch).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-
+local Config = require("Config")
 local UnitRegistry = require("Macro.UnitRegistry")
 
 local GameAdapter = {}
 GameAdapter.__index = GameAdapter
 
--- Находит папку knit внутри Packages._Index.
--- Имя версии (напр. sleitnick_knit@1.7.0) меняется между играми/версиями,
--- поэтому ищем по имени "knit", а не хардкодим версию.
-local _knitFolder
+local knitFolder
 local function getKnitFolder()
-	if _knitFolder and _knitFolder.Parent then return _knitFolder end
-	local packages = ReplicatedStorage:WaitForChild("Packages", 10)
-	local index = packages and packages:WaitForChild("_Index", 10)
-	if not index then return nil end
-	for _, d in ipairs(index:GetDescendants()) do
-		if d.Name == "knit" and d:FindFirstChild("Services") then
-			_knitFolder = d
-			return d
-		end
-	end
-	return nil
+    if knitFolder and knitFolder.Parent then return knitFolder end
+    local packages = ReplicatedStorage:WaitForChild("Packages", 10)
+    local index = packages and packages:WaitForChild("_Index", 10)
+    if not index then return nil end
+    for _, item in ipairs(index:GetDescendants()) do
+        if item.Name == "knit" and item:FindFirstChild("Services") then knitFolder = item; return item end
+    end
+    return nil
 end
 
--- Достаёт RemoteFunction сервиса: knit.Services.<service>.RF.<name>
-local function knitRF(service, name)
-	local knit = getKnitFolder()
-	if not knit then
-		warn("[MacroRecorder] не найдена папка knit в ReplicatedStorage.Packages._Index")
-		return nil
-	end
-	local services = knit:WaitForChild("Services", 10)
-	local svc = services and services:WaitForChild(service, 10)
-	local rf = svc and svc:WaitForChild("RF", 10)
-	local remote = rf and rf:WaitForChild(name, 10)
-	if not remote then
-		warn(("[MacroRecorder] не найден ремоут: %s.RF.%s"):format(service, name))
-	end
-	return remote
+local function findRemote(kind, serviceName, remoteName)
+    local knit = getKnitFolder()
+    local services = knit and knit:FindFirstChild("Services")
+    local service = services and services:FindFirstChild(serviceName)
+    local folder = service and service:FindFirstChild(kind)
+    local remote = folder and folder:FindFirstChild(remoteName)
+    if not remote then warn(("[MacroRecorder] missing remote %s.%s.%s"):format(serviceName, kind, remoteName)) end
+    return remote
 end
 
--- Достаёт RemoteEvent сервиса: knit.Services.<service>.RE.<name>
-local function knitRE(service, name)
-	local knit = getKnitFolder()
-	if not knit then
-		warn("[MacroRecorder] не найдена папка knit в ReplicatedStorage.Packages._Index")
-		return nil
-	end
-	local services = knit:WaitForChild("Services", 10)
-	local svc = services and services:WaitForChild(service, 10)
-	local re = svc and svc:WaitForChild("RE", 10)
-	local remote = re and re:WaitForChild(name, 10)
-	if not remote then
-		warn(("[MacroRecorder] не найден ремоут: %s.RE.%s"):format(service, name))
-	end
-	return remote
+local function invoke(remote, ...)
+    if not remote then return false, "Remote is unavailable" end
+    local packed = table.pack(pcall(remote.InvokeServer, remote, ...))
+    if not packed[1] then return false, tostring(packed[2]) end
+    return true, table.unpack(packed, 2, packed.n)
 end
 
 function GameAdapter.new(opts)
-	opts = opts or {}
-	local self = setmetatable({}, GameAdapter)
-	self.registry = UnitRegistry.new()
-
-	self.remotes = {
-		Vote        = knitRF("WaveService", "Vote"),
-		PlaceUnit   = knitRF("TowerService", "PlaceUnit"),
-		UpgradeUnit = knitRF("TowerService", "UpgradeUnit"),
-		SellUnit    = knitRF("TowerService", "SellUnit"),
-		ChangePriority = knitRF("TowerService", "ChangePriority"),
-		VoteReplay  = knitRE("WaveService", "VoteReplay"),
-		VoteNext    = knitRE("WaveService", "NextMap"),
-		ToLobby     = knitRE("WaveService", "ToLobby"),
-	}
-
-	-- slot (число из PlaceUnit) -> имя юнита из хотбара. ЗАПОЛНИ под игру.
-	self.GetHotbarUnitName = opts.GetHotbarUnitName or function(slot) return "Unit " .. tostring(slot) end
-	-- имя юнита -> slot в хотбаре (для воспроизведения). ЗАПОЛНИ под игру.
-	self.GetSlotByUnitName = opts.GetSlotByUnitName or function(name) return 1 end
-	-- () -> { uuid, uuid, ... } : список id всех поставленных юнитов в workspace. ЗАПОЛНИ.
-	self.ListPlacedUnitIds = opts.ListPlacedUnitIds or function() return {} end
-	-- сколько ждать появления нового юнита в workspace (сек)
-	self.UnitCaptureTimeout = opts.UnitCaptureTimeout or 0.5
-
-	self._recorder = nil
-	self._oldNamecall = nil
-	return self
+    opts = opts or {}
+    local self = setmetatable({}, GameAdapter)
+    self.registry = UnitRegistry.new()
+    self.GetHotbarUnitName = opts.GetHotbarUnitName or function() return nil end
+    self.GetSlotByUnitName = opts.GetSlotByUnitName or function() return nil end
+    self.ListPlacedUnitIds = opts.ListPlacedUnitIds or function() return {} end
+    self.UnitCaptureTimeout = Config.UnitCaptureTimeout
+    self.PendingResolveTimeout = Config.PendingResolveTimeout
+    self._claimedUuids = {}
+    self.remotes = {
+        Vote = findRemote("RF", "WaveService", "Vote"),
+        PlaceUnit = findRemote("RF", "TowerService", "PlaceUnit"),
+        UpgradeUnit = findRemote("RF", "TowerService", "UpgradeUnit"),
+        SellUnit = findRemote("RF", "TowerService", "SellUnit"),
+        ChangePriority = findRemote("RF", "TowerService", "ChangePriority"),
+        VoteReplay = findRemote("RE", "WaveService", "VoteReplay"),
+        VoteNext = findRemote("RE", "WaveService", "NextMap"),
+        ToLobby = findRemote("RE", "WaveService", "ToLobby"),
+    }
+    return self
 end
 
--- Множество текущих id юнитов
 function GameAdapter:_snapshotIds()
-	local set = {}
-	for _, id in ipairs(self.ListPlacedUnitIds()) do
-		set[id] = true
-	end
-	return set
+    local result = {}
+    for _, id in ipairs(self.ListPlacedUnitIds()) do result[id] = true end
+    return result
 end
 
--- Ищем id, которого не было до постановки (с коротким поллингом на случай репликации)
 function GameAdapter:_findNewId(before)
-	local deadline = os.clock() + self.UnitCaptureTimeout
-	repeat
-		for _, id in ipairs(self.ListPlacedUnitIds()) do
-			if not before[id] then return id end
-		end
-		RunService.Heartbeat:Wait()
-	until os.clock() >= deadline
-	return nil
+    local deadline = os.clock() + self.UnitCaptureTimeout
+    repeat
+        for _, id in ipairs(self.ListPlacedUnitIds()) do
+            if not before[id] and not self._claimedUuids[id] then
+                self._claimedUuids[id] = true
+                return id
+            end
+        end
+        RunService.Heartbeat:Wait()
+    until os.clock() >= deadline
+    return nil
 end
 
-----------------------------------------------------------------------
--- ЗАПИСЬ: перехват InvokeServer через __namecall
-----------------------------------------------------------------------
+function GameAdapter:_recordUnitAction(uuid, createAction)
+    local label = self.registry:Resolve(uuid)
+    local action = createAction(label or ("UNRESOLVED:" .. tostring(uuid)))
+    if label or not action then return action end
+    task.spawn(function()
+        local resolved = self.registry:WaitForLabel(uuid, self.PendingResolveTimeout)
+        if resolved then action.Pos = resolved
+        else warn("[MacroRecorder] unresolved unit UUID: " .. tostring(uuid)) end
+    end)
+    return action
+end
+
 function GameAdapter:InstallHooks(recorder)
-	self._recorder = recorder
-	local remotes = self.remotes
-	local registry = self.registry
+    if not (hookmetamethod and getnamecallmethod and setnamecallmethod) then
+        warn("[MacroRecorder] required hook functions are unavailable")
+        return false
+    end
 
-	if not (hookmetamethod and getnamecallmethod and setnamecallmethod) then
-		warn("[MacroRecorder] hook-функции недоступны в этом executor'е")
-		return
-	end
+    local remotes, registry, depth = self.remotes, self.registry, 0
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(instance, ...)
+        if depth > 0 then return oldNamecall(instance, ...) end
+        local method = getnamecallmethod()
+        if (checkcaller and checkcaller()) or method ~= "InvokeServer" then return oldNamecall(instance, ...) end
+        local args = table.pack(...)
 
-	local depth = 0
-	local oldNamecall
-	oldNamecall = hookmetamethod(game, "__namecall", function(inst, ...)
-		-- Наш код записи сам дёргает namecall'ы -> защита от рекурсии.
-		if depth > 0 then
-			return oldNamecall(inst, ...)
-		end
+        if instance == remotes.PlaceUnit then
+            local unitName, label, before
+            depth = depth + 1
+            pcall(function()
+                unitName = self.GetHotbarUnitName(args[1])
+                before = self:_snapshotIds()
+                if recorder:IsRecording() then
+                    if unitName then
+                        label = registry:Reserve(unitName)
+                        recorder:PlaceUnit(unitName, args[2], label)
+                    else
+                        warn("[MacroRecorder] cannot resolve hotbar slot " .. tostring(args[1]))
+                    end
+                end
+            end)
+            depth = depth - 1
+            setnamecallmethod(method)
+            local result = oldNamecall(instance, table.unpack(args, 1, args.n))
+            task.spawn(function()
+                local uuid
+                if typeof(result) == "string" and result ~= "" then uuid = result; self._claimedUuids[uuid] = true
+                elseif before then uuid = self:_findNewId(before) end
+                if label and uuid then
+                    local ok, err = registry:Bind(label, uuid)
+                    if not ok then warn("[MacroRecorder] " .. err) end
+                elseif label then warn("[MacroRecorder] UUID not found for " .. label) end
+            end)
+            return result
+        end
 
-		local method = getnamecallmethod()
-
-		-- Интересует только клиентский InvokeServer.
-		if (checkcaller and checkcaller()) or method ~= "InvokeServer" then
-			return oldNamecall(inst, ...)
-		end
-
-		local args = table.pack(...)
-
-		if inst == remotes.PlaceUnit then
-			local unitName, before
-			depth = depth + 1
-			pcall(function()
-				unitName = self.GetHotbarUnitName(args[1])
-				if recorder:IsRecording() then
-					recorder:PlaceUnit(unitName, args[2]) -- Time фиксируется в момент отправки
-				end
-				before = self:_snapshotIds()
-			end)
-			depth = depth - 1
-
-			-- ВАЖНО: восстановить метод перед реальным вызовом.
-			setnamecallmethod(method)
-			local result = oldNamecall(inst, table.unpack(args, 1, args.n))
-
-			-- захват UUID в отдельном потоке, чтобы не морозить хук.
-			task.spawn(function()
-				depth = depth + 1
-				pcall(function()
-					local uuid = (typeof(result) == "string" and result)
-						or (before and self:_findNewId(before))
-					if unitName then registry:Register(unitName, uuid) end
-				end)
-				depth = depth - 1
-			end)
-			return result
-		end
-
-		-- Остальные действия: пишем и пробрасываем без изменений.
-		depth = depth + 1
-		pcall(function()
-			if inst == remotes.UpgradeUnit then
-				if recorder:IsRecording() then
-					recorder:UpgradeUnit(registry:Resolve(args[1]) or tostring(args[1]))
-				end
-			elseif inst == remotes.SellUnit then
-				if recorder:IsRecording() then
-					recorder:SellUnit(registry:Resolve(args[1]) or tostring(args[1]))
-				end
-			elseif inst == remotes.ChangePriority then
-				-- args[1] = uuid, args[2] = приоритет (число)
-				if recorder:IsRecording() then
-					recorder:ChangePriority(registry:Resolve(args[1]) or tostring(args[1]), args[2])
-				end
-			elseif inst == remotes.Vote then
-				if recorder:IsRecording() then
-					recorder:VoteSkip()
-				end
-			end
-		end)
-		depth = depth - 1
-
-		setnamecallmethod(method)
-		return oldNamecall(inst, table.unpack(args, 1, args.n))
-	end)
-
-	self._oldNamecall = oldNamecall
+        depth = depth + 1
+        pcall(function()
+            if instance == remotes.UpgradeUnit and recorder:IsRecording() then
+                self:_recordUnitAction(args[1], function(label) return recorder:UpgradeUnit(label) end)
+            elseif instance == remotes.SellUnit and recorder:IsRecording() then
+                self:_recordUnitAction(args[1], function(label) return recorder:SellUnit(label) end)
+            elseif instance == remotes.ChangePriority and recorder:IsRecording() then
+                self:_recordUnitAction(args[1], function(label) return recorder:ChangePriority(label, args[2]) end)
+            elseif instance == remotes.Vote and recorder:IsRecording() then recorder:VoteSkip() end
+        end)
+        depth = depth - 1
+        setnamecallmethod(method)
+        return oldNamecall(instance, table.unpack(args, 1, args.n))
+    end)
+    return true
 end
 
-----------------------------------------------------------------------
--- ВОСПРОИЗВЕДЕНИЕ: выполнить действие в игре
-----------------------------------------------------------------------
 function GameAdapter:Dispatch(action, ctx)
-	local remotes = self.remotes
-	local registry = self.registry
-	local t = action.Type
+    local t, remotes, registry = action.Type, self.remotes, self.registry
+    if t == "PlaceUnit" then
+        local slot = self.GetSlotByUnitName(action.Unit)
+        if not slot then return false, "Unit is absent from hotbar: " .. tostring(action.Unit) end
+        local before = self:_snapshotIds()
+        local label = action.Label or registry:Reserve(action.Unit)
+        local ok, result = invoke(remotes.PlaceUnit, slot, ctx.cframe)
+        if not ok then return false, "PlaceUnit: " .. tostring(result) end
+        local uuid
+        if typeof(result) == "string" and result ~= "" then uuid = result; self._claimedUuids[uuid] = true
+        else uuid = self:_findNewId(before) end
+        if not uuid then return false, "PlaceUnit succeeded but UUID was not found" end
+        return registry:Bind(label, uuid)
+    elseif t == "VoteSkip" then
+        return invoke(remotes.Vote, true)
+    end
 
-	if t == "PlaceUnit" then
-		local slot = self.GetSlotByUnitName(action.Unit)
-		local before = self:_snapshotIds()
-		local result = remotes.PlaceUnit:InvokeServer(slot, ctx.cframe)
-		-- тот же порядок регистрации -> label совпадёт с записанным "Имя - N"
-		local uuid = (typeof(result) == "string" and result) or self:_findNewId(before)
-		registry:Register(action.Unit, uuid)
-
-	elseif t == "UpgradeUnit" then
-		local uuid = registry:ResolveLabel(action.Pos)
-		if uuid then remotes.UpgradeUnit:InvokeServer(uuid) end
-
-	elseif t == "SellUnit" then
-		local uuid = registry:ResolveLabel(action.Pos)
-		if uuid then remotes.SellUnit:InvokeServer(uuid) end
-
-	elseif t == "ChangePriority" then
-		local uuid = registry:ResolveLabel(action.Pos)
-		if uuid then remotes.ChangePriority:InvokeServer(uuid, action.Prio) end
-
-	elseif t == "VoteSkip" then
-		remotes.Vote:InvokeServer(true)
-
-	elseif t == "UseAbility" or t == "ConfirmTowerLink" then
-		-- ремоуты пока не известны -- добавь позже
-	end
+    local uuid = registry:ResolveLabel(action.Pos)
+    if not uuid then return false, "Unit label not found: " .. tostring(action.Pos) end
+    if t == "UpgradeUnit" then return invoke(remotes.UpgradeUnit, uuid) end
+    if t == "SellUnit" then return invoke(remotes.SellUnit, uuid) end
+    if t == "ChangePriority" then return invoke(remotes.ChangePriority, uuid, action.Prio) end
+    return false, "Unsupported action: " .. tostring(t)
 end
 
--- Действия в конце игры (окно Finished)
-function GameAdapter:VoteReplay()
-	if self.remotes.VoteReplay then
-		self.remotes.VoteReplay:FireServer()
-	else
-		warn("[MacroRecorder] VoteReplay недоступен")
-	end
+local function fire(remote)
+    if not remote then return false, "Remote is unavailable" end
+    local ok, err = pcall(remote.FireServer, remote)
+    return ok, ok and nil or tostring(err)
 end
 
-function GameAdapter:VoteNext()
-	if self.remotes.VoteNext then
-		self.remotes.VoteNext:FireServer()
-	else
-		warn("[MacroRecorder] VoteNext недоступен -- проверь имя ремоута")
-	end
-end
-
-function GameAdapter:AutoStart()
-	if self.remotes.Vote then
-		self.remotes.Vote:InvokeServer(true)
-	else
-		warn("[MacroRecorder] Vote (auto start) недоступен")
-	end
-end
-
-function GameAdapter:ToLobby()
-	if self.remotes.ToLobby then
-		self.remotes.ToLobby:FireServer()
-	else
-		warn("[MacroRecorder] ToLobby недоступен")
-	end
-end
-
-function GameAdapter:ResetRegistry()
-	self.registry:Reset()
-end
-
+function GameAdapter:VoteReplay() return fire(self.remotes.VoteReplay) end
+function GameAdapter:VoteNext() return fire(self.remotes.VoteNext) end
+function GameAdapter:ToLobby() return fire(self.remotes.ToLobby) end
+function GameAdapter:AutoStart() return invoke(self.remotes.Vote, true) end
+function GameAdapter:ResetRegistry() self.registry:Reset(); table.clear(self._claimedUuids) end
 return GameAdapter

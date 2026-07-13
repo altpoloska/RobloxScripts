@@ -1,85 +1,84 @@
 local RunService = game:GetService("RunService")
-
 local Config = require("Config")
 local Actions = require("Macro.Actions")
 
 local Recorder = {}
 Recorder.__index = Recorder
 
--- opts.GetWave : () -> number  (возвращает номер текущей волны)
 function Recorder.new(opts)
-	opts = opts or {}
-	local self = setmetatable({}, Recorder)
-	self.Recording = false
-	self.Actions = {} -- массив действий по порядку
-	self.GameSpeed = Config.GameSpeed
-	self._getWave = opts.GetWave or function() return 0 end
-	self._wave = 0
-	self._waveClock = 0
-	self._conn = nil
-	return self
+    opts = opts or {}
+    return setmetatable({
+        Recording = false,
+        Actions = {},
+        GameSpeed = Config.DefaultGameSpeed,
+        _getWave = opts.GetWave or function() return nil end,
+        _wave = nil,
+        _waveClock = 0,
+        _conn = nil,
+    }, Recorder)
 end
 
--- "<волна> <секунды с начала волны>"
+function Recorder:SetGameSpeed(speed)
+    if speed ~= 1 and speed ~= 1.5 then return false, "Unsupported speed" end
+    if self.Recording then return false, "Cannot change speed while recording" end
+    self.GameSpeed = speed
+    return true
+end
+
+-- V2 stores logical game seconds. At x1.5, 10 real seconds become 15 game seconds.
 function Recorder:_timeString()
-	return string.format("%d %s", self._wave, tostring(os.clock() - self._waveClock))
+    local logicalSeconds = (os.clock() - self._waveClock) * self.GameSpeed
+    return string.format("%d %.6f", self._wave, logicalSeconds)
 end
 
 function Recorder:Start()
-	if self.Recording then return false, "Already recording" end
-	self.Recording = true
-	self.Actions = {}
-	self._wave = self._getWave()
-	self._waveClock = os.clock()
+    if self.Recording then return false, "Already recording" end
+    local wave = self._getWave()
+    if type(wave) ~= "number" then return false, "Current wave is unavailable" end
 
-	-- отслеживаем смену волны, чтобы сбрасывать таймер волны
-	self._conn = RunService.Heartbeat:Connect(function()
-		local w = self._getWave()
-		if w ~= self._wave then
-			self._wave = w
-			self._waveClock = os.clock()
-		end
-	end)
-	return true
+    self.Recording = true
+    self.Actions = {}
+    self._wave = wave
+    self._waveClock = os.clock()
+    self._conn = RunService.Heartbeat:Connect(function()
+        local current = self._getWave()
+        if type(current) == "number" and current ~= self._wave then
+            self._wave = current
+            self._waveClock = os.clock()
+        end
+    end)
+    return true
 end
 
--- Записать действие (таблица из Actions.*). Time проставляется здесь.
 function Recorder:Record(action)
-	if not self.Recording then return end
-	action.Time = self:_timeString()
-	table.insert(self.Actions, action)
-	return action
+    if not self.Recording then return nil end
+    action.Time = self:_timeString()
+    self.Actions[#self.Actions + 1] = action
+    return action
 end
 
--- Удобные обёртки -- вызываются из GameAdapter при перехвате
-function Recorder:PlaceUnit(unitName, cframe) return self:Record(Actions.PlaceUnit(unitName, cframe)) end
+function Recorder:PlaceUnit(name, cf, label) return self:Record(Actions.PlaceUnit(name, cf, label)) end
 function Recorder:UpgradeUnit(label) return self:Record(Actions.UpgradeUnit(label)) end
-function Recorder:ChangePriority(label, prio) return self:Record(Actions.ChangePriority(label, prio)) end
-function Recorder:UseAbility(label, abi) return self:Record(Actions.UseAbility(label, abi)) end
-function Recorder:ConfirmTowerLink(label) return self:Record(Actions.ConfirmTowerLink(label)) end
+function Recorder:ChangePriority(label, priority) return self:Record(Actions.ChangePriority(label, priority)) end
 function Recorder:SellUnit(label) return self:Record(Actions.SellUnit(label)) end
 function Recorder:VoteSkip() return self:Record(Actions.VoteSkip()) end
 
 function Recorder:Stop()
-	if not self.Recording then return end
-	self.Recording = false
-	if self._conn then
-		self._conn:Disconnect()
-		self._conn = nil
-	end
-	return self:GetMacro()
+    if not self.Recording then return nil, "Not recording" end
+    self.Recording = false
+    if self._conn then self._conn:Disconnect(); self._conn = nil end
+    return self:GetMacro()
 end
 
--- Возвращает макрос в целевом формате:
--- { ["Game Speed"] = n, ["1"] = {..}, ["2"] = {..}, ... }
 function Recorder:GetMacro()
-	local macro = { ["Game Speed"] = self.GameSpeed }
-	for i, action in ipairs(self.Actions) do
-		macro[tostring(i)] = action
-	end
-	return macro
+    local macro = {
+        ["Format Version"] = Config.FormatVersion,
+        ["Time Basis"] = Config.TimeBasis,
+        ["Game Speed"] = self.GameSpeed,
+    }
+    for index, action in ipairs(self.Actions) do macro[tostring(index)] = action end
+    return macro
 end
 
 function Recorder:IsRecording() return self.Recording end
-
 return Recorder
