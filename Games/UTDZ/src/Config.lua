@@ -3,6 +3,7 @@ local Config = {
     RecordKey = Enum.KeyCode.F6,
     PlayKey = Enum.KeyCode.F7,
     FolderName = "PoloskaMacros",
+    GameFolderName = "UTDZ",
 
     DefaultGameSpeed = 1.5,
     SupportedSpeeds = { 1, 1.5 },

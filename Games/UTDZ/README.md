@@ -26,10 +26,10 @@
 ## Build
 
 ```bash
-luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./MacroRecorder.lua
+luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./dist/MacroRecorder.lua
 ```
 
-Результат: `./MacroRecorder.lua`.
+Результат: `dist/MacroRecorder.lua`.
 
 ## v2.2 AFK changes
 
@@ -52,3 +52,4 @@ luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./MacroRecorder.lua
 - Every `PlaceUnit` playback gets a random world-space X/Z offset with a total distance from `0.001` to `0.01` studs.
 - Recorded macro coordinates stay unchanged, so older macro files remain compatible.
 - Removed decorative section labels from the Main tab and kept only the live status label on the Macro tab.
+- Macro files are stored per game in `PoloskaMacros/UTDZ`; the root and game folder names are configured in `src/Config.lua`.

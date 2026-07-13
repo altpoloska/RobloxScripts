@@ -4,6 +4,14 @@ local Actions = require("Macro.Actions")
 
 local Storage = {}
 
+local function getFolderPath()
+    local gameFolder = Config.GameFolderName
+    if type(gameFolder) ~= "string" or gameFolder == "" then
+        return Config.FolderName
+    end
+    return Config.FolderName .. "/" .. gameFolder
+end
+
 local SUPPORTED = {
     PlaceUnit = true,
     UpgradeUnit = true,
@@ -110,11 +118,22 @@ local function hasFiles()
     return typeof(writefile) == "function" and typeof(readfile) == "function"
 end
 
-local function ensureFolder()
+local function createFolder(path)
     if typeof(makefolder) == "function" and typeof(isfolder) == "function"
-        and not isfolder(Config.FolderName) then
-        local ok, err = pcall(makefolder, Config.FolderName)
+        and not isfolder(path) then
+        local ok, err = pcall(makefolder, path)
         if not ok then return false, tostring(err) end
+    end
+    return true
+end
+
+local function ensureFolder()
+    local rootOk, rootError = createFolder(Config.FolderName)
+    if not rootOk then return false, rootError end
+
+    local folderPath = getFolderPath()
+    if folderPath ~= Config.FolderName then
+        return createFolder(folderPath)
     end
     return true
 end
@@ -122,7 +141,7 @@ end
 function Storage.Exists(name)
     local safeName = Storage.SanitizeName(name)
     if not safeName or typeof(isfile) ~= "function" then return false end
-    return isfile(Config.FolderName .. "/" .. safeName .. ".json")
+    return isfile(getFolderPath() .. "/" .. safeName .. ".json")
 end
 
 function Storage.Save(name, macro)
@@ -135,7 +154,7 @@ function Storage.Save(name, macro)
     if not folderOk then return false, "Folder creation failed: " .. folderError end
     local encodeOk, json = pcall(Storage.Serialize, macro)
     if not encodeOk then return false, "JSON encode failed: " .. tostring(json) end
-    local writeOk, writeError = pcall(writefile, Config.FolderName .. "/" .. safeName .. ".json", json)
+    local writeOk, writeError = pcall(writefile, getFolderPath() .. "/" .. safeName .. ".json", json)
     if not writeOk then return false, "Write failed: " .. tostring(writeError) end
     return true
 end
@@ -154,7 +173,7 @@ function Storage.Load(name)
     if not hasFiles() then return nil, "File API unavailable" end
     local safeName, nameError = Storage.SanitizeName(name)
     if not safeName then return nil, nameError end
-    local path = Config.FolderName .. "/" .. safeName .. ".json"
+    local path = getFolderPath() .. "/" .. safeName .. ".json"
     if typeof(isfile) == "function" and not isfile(path) then return nil, "File not found" end
     local ok, text = pcall(readfile, path)
     if not ok then return nil, "Read failed: " .. tostring(text) end
@@ -164,7 +183,7 @@ end
 function Storage.List()
     if typeof(listfiles) ~= "function" then return {} end
     ensureFolder()
-    local ok, paths = pcall(listfiles, Config.FolderName)
+    local ok, paths = pcall(listfiles, getFolderPath())
     if not ok then return {} end
     local names = {}
     for _, path in ipairs(paths) do
