@@ -1168,13 +1168,28 @@ local function createGUI()
     resizeHandle.Name = "ResizeHandle"
     resizeHandle.AnchorPoint = Vector2.new(1, 1)
     resizeHandle.Position = UDim2.fromScale(1, 1)
-    resizeHandle.Size = UDim2.fromOffset(24, 24)
+    resizeHandle.Size = UDim2.fromOffset(28, 28)
     resizeHandle.BackgroundTransparency = 1
     resizeHandle.Image = ASSETS.resize
     resizeHandle.ImageColor3 = COLORS.text
-    resizeHandle.ImageTransparency = 0.15
+    resizeHandle.ImageTransparency = 0.1
     resizeHandle.ZIndex = 20
     resizeHandle.Parent = window
+
+    -- A high-contrast corner marker makes the resize affordance obvious even
+    -- when the built-in Studio texture is faint in the current experience.
+    local resizeCorner = Instance.new("TextLabel")
+    resizeCorner.Name = "CornerIndicator"
+    resizeCorner.Size = UDim2.fromScale(1, 1)
+    resizeCorner.BackgroundTransparency = 1
+    resizeCorner.BorderSizePixel = 0
+    resizeCorner.Font = Enum.Font.GothamBold
+    resizeCorner.Text = "◢"
+    resizeCorner.TextColor3 = COLORS.text
+    resizeCorner.TextSize = 19
+    resizeCorner.TextTransparency = 0.05
+    resizeCorner.ZIndex = 21
+    resizeCorner.Parent = resizeHandle
 
     createCloseWarning()
 
