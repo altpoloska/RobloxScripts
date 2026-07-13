@@ -26,10 +26,10 @@
 ## Build
 
 ```bash
-luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./dist/MacroRecorder.lua
+luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./MacroRecorder.lua
 ```
 
-Результат: `dist/MacroRecorder.lua`.
+Результат: `./MacroRecorder.lua`.
 
 ## v2.2 AFK changes
 
