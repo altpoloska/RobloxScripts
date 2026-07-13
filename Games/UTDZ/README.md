@@ -26,7 +26,7 @@
 ## Build
 
 ```bash
-python3 build.py
+luabundler bundle ./src/Main.lua -p "./src/?.lua" -o ./dist/MacroRecorder.lua
 ```
 
 Результат: `dist/MacroRecorder.lua`.
