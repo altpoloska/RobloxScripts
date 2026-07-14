@@ -39,6 +39,15 @@ luabundler bundle "src/Main.lua" -p "?.lua" -o "AnimeParadox.lua"
 - `README.md` — инструкция по сборке и описание логики.
 - Макросы создаются игрой в `PoloskaMacros/AnimeParadoxX/*.json`.
 
+## Изменения v3.24
+
+- Добавлена отдельная вкладка `Webhook` с полем URL и тогглером `Send rewards to webhook`.
+- При каждом обнаружении экрана `PlayerGui.StageEnd.StageEnd` (тот же детектор, что и для Auto Next/Auto Replay) один раз считываются все текстовые строки из `LHS.RewardHolder.ScrollingFrame.Content` и отправляются в Discord-вебхук в виде embed (`Result`: Victory/Defeat + имя макроса, `Reward`: список наград).
+- Определение Victory/Defeat выполняется поиском `VictoryHeader`/`DefeatHeader` внутри окна StageEnd и проверкой их `Visible`.
+- URL вебхука и состояние тогглера сохраняются в `settings.json` (новые ключи `WebhookUrl`, `WebhookEnabled`).
+- Добавлена кнопка `Send test message` для проверки вебхука без ожидания конца матча.
+- Добавлены модули `src/Utils/Webhook.lua` (HTTP POST через `request`/`http_request`/`syn.request`/`fluxus.request`) и `src/Utils/RewardReader.lua` (чтение наград и исхода матча).
+
 ## Изменения v3.23
 
 - Действие больше не отменяется, если текущая волна стала выше записанной.
@@ -115,7 +124,7 @@ luabundler bundle "src/Main.lua" -p "?.lua" -o "AnimeParadox.lua"
 
 - Окончание матча определяется по точному пути `PlayerGui.StageEnd.StageEnd`.
 - Для GuiObject проверяются `Visible`, размер, видимость родителей и `ScreenGui.Enabled`.
-- Поиск по словам `Victory`, `Defeat`, `Rewards` и другим эвристикам удалён, поэтому ложных срабатываний от других окон больше нет.
+- Поиск по слов��м `Victory`, `Defeat`, `Rewards` и другим эвристикам удалён, поэтому ложных срабатываний от других окон больше нет.
 
 ## Изменения v3.12
 

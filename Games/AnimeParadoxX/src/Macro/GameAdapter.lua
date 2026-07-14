@@ -254,10 +254,14 @@ function GameAdapter:InstallHooks(recorder)
     local depth = 0
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(instance, ...)
-        if depth > 0 then return oldNamecall(instance, ...) end
+        if depth > 0 then return oldNamecall(instance, ...) end 
         local method = getnamecallmethod()
-        if (checkcaller and checkcaller()) or method ~= "FireServer" then return oldNamecall(instance, ...) end
-        if instance ~= unitActionRemote then return oldNamecall(instance, ...) end
+        if (checkcaller and checkcaller()) or method ~= "FireServer" then
+            return oldNamecall(instance, ...) 
+        end
+        if instance ~= unitActionRemote then 
+            return oldNamecall(instance, ...) 
+        end
         local args = table.pack(...)
         local command = args[1]
 

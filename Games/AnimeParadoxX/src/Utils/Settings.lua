@@ -11,6 +11,7 @@ local BOOLEAN_KEYS = {
     AutoNext = true,
     AutoReplay = true,
     PlayMacro = true,
+    WebhookEnabled = true,
 }
 
 local data = {}
@@ -21,6 +22,7 @@ local function resetData()
         AutoNext = false,
         AutoReplay = false,
         PlayMacro = false,
+        WebhookEnabled = false,
     }
 end
 
@@ -89,6 +91,10 @@ function Settings.Load()
         data.SelectedMacro = saved.SelectedMacro
     end
 
+    if type(saved.WebhookUrl) == "string" then
+        data.WebhookUrl = saved.WebhookUrl
+    end
+
     return data
 end
 
@@ -132,6 +138,10 @@ function Settings.Set(key, value)
     elseif key == "SelectedMacro" then
         if value ~= nil and type(value) ~= "string" then
             return false, "Invalid SelectedMacro value"
+        end
+    elseif key == "WebhookUrl" then
+        if value ~= nil and type(value) ~= "string" then
+            return false, "Invalid WebhookUrl value"
         end
     else
         return false, "Unknown setting: " .. tostring(key)

@@ -1,3 +1,6 @@
+local Webhook = require("src.Utils.Webhook")
+local RewardReader = require("src.Utils.RewardReader")
+
 local Interface = {}
 
 function Interface.new(deps)
@@ -15,6 +18,8 @@ function Interface.new(deps)
     local playEnabled = settings.Get("PlayMacro") == true
     local autoNextEnabled = settings.Get("AutoNext") == true
     local autoReplayEnabled = settings.Get("AutoReplay") == true
+    local webhookEnabled = settings.Get("WebhookEnabled") == true
+    local webhookUrl = settings.Get("WebhookUrl") or ""
     local matchEndLatched = false
     local nextRewardClickAt = 0
     local overwriteConfirmUntil = 0
@@ -154,6 +159,57 @@ function Interface.new(deps)
     mainTab:Credit({
         Name = "polosa__",
         Description = "Anime Paradox X (v3.23)",
+    })
+
+    local webhookTab = window:Tab({ Name = "Webhook" })
+    local webhookStatus = webhookTab:Section("Discord webhook")
+
+    webhookTab:Textbox({
+        Name = "Webhook URL",
+        Placeholder = "https://discord.com/api/webhooks/...",
+        Text = webhookUrl,
+        Callback = function(text)
+            text = tostring(text or ""):match("^%s*(.-)%s*$")
+            webhookUrl = text
+            settings.Set("WebhookUrl", text)
+            webhookStatus.Text = text ~= ""
+                and "Webhook URL saved"
+                or "Webhook URL cleared"
+        end,
+    })
+
+    webhookTab:Toggle({
+        Name = "Send rewards to webhook",
+        StartingState = webhookEnabled,
+        Callback = function(state)
+            webhookEnabled = state
+            settings.Set("WebhookEnabled", state)
+        end,
+    })
+
+    webhookTab:Button({
+        Name = "Send test message",
+        Callback = function()
+            if webhookUrl == "" then
+                notify("Webhook", "Set the webhook URL first")
+                return
+            end
+
+            local ok, sendError = Webhook.SendEmbed(webhookUrl, {
+                title = "Anime Paradox X",
+                description = "Test message from the macro webhook tab.",
+                color = 0x5865F2,
+            })
+
+            webhookStatus.Text = ok
+                and "Test message sent"
+                or ("Test failed: " .. tostring(sendError))
+        end,
+    })
+
+    webhookTab:Credit({
+        Name = "polosa__",
+        Description = "Sends stage-end rewards to a Discord webhook",
     })
 
     local macroTab = window:Tab({ Name = "Macro" })
@@ -456,6 +512,40 @@ function Interface.new(deps)
         end)
     end
 
+    local function sendRewardsToWebhook()
+        if not webhookEnabled or webhookUrl == "" then
+            return
+        end
+
+        local lines, readError = RewardReader.GetRewardLines()
+        if #lines == 0 then
+            notify("Webhook", readError or "No rewards found", 4)
+            return
+        end
+
+        local outcome = RewardReader.GetOutcome() or "Unknown"
+        local macroLabel = playingName or selectedName or "manual"
+
+        local embedOk, embedError = Webhook.SendEmbed(webhookUrl, {
+            title = "Anime Paradox X",
+            color = outcome == "Victory" and 0x57F287 or 0xED4245,
+            fields = {
+                {
+                    name = "Result",
+                    value = outcome .. "\nMacro: " .. tostring(macroLabel),
+                },
+                {
+                    name = "Reward",
+                    value = table.concat(lines, "\n"),
+                },
+            },
+        })
+
+        if not embedOk then
+            notify("Webhook", embedError, 5)
+        end
+    end
+
     task.spawn(function()
         while window.Gui and window.Gui.Parent do
             local autoActionEnabled = autoNextEnabled or autoReplayEnabled
@@ -477,6 +567,7 @@ function Interface.new(deps)
                     matchEndLatched = true
                     player:Stop()
                     adapter:ResetRegistry()
+                    sendRewardsToWebhook()
 
                     local actionOk = true
                     local actionError = nil

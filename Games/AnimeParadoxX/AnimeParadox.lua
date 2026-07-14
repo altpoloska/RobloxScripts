@@ -118,6 +118,7 @@ local BOOLEAN_KEYS = {
     AutoNext = true,
     AutoReplay = true,
     PlayMacro = true,
+    WebhookEnabled = true,
 }
 
 local data = {}
@@ -128,6 +129,7 @@ local function resetData()
         AutoNext = false,
         AutoReplay = false,
         PlayMacro = false,
+        WebhookEnabled = false,
     }
 end
 
@@ -196,6 +198,10 @@ function Settings.Load()
         data.SelectedMacro = saved.SelectedMacro
     end
 
+    if type(saved.WebhookUrl) == "string" then
+        data.WebhookUrl = saved.WebhookUrl
+    end
+
     return data
 end
 
@@ -239,6 +245,10 @@ function Settings.Set(key, value)
     elseif key == "SelectedMacro" then
         if value ~= nil and type(value) ~= "string" then
             return false, "Invalid SelectedMacro value"
+        end
+    elseif key == "WebhookUrl" then
+        if value ~= nil and type(value) ~= "string" then
+            return false, "Invalid WebhookUrl value"
         end
     else
         return false, "Unknown setting: " .. tostring(key)
@@ -324,6 +334,9 @@ return AntiAfk
 
 end)
 __bundle_register("src.UI.Interface", function(require, _LOADED, __bundle_register, __bundle_modules)
+local Webhook = require("src.Utils.Webhook")
+local RewardReader = require("src.Utils.RewardReader")
+
 local Interface = {}
 
 function Interface.new(deps)
@@ -341,6 +354,8 @@ function Interface.new(deps)
     local playEnabled = settings.Get("PlayMacro") == true
     local autoNextEnabled = settings.Get("AutoNext") == true
     local autoReplayEnabled = settings.Get("AutoReplay") == true
+    local webhookEnabled = settings.Get("WebhookEnabled") == true
+    local webhookUrl = settings.Get("WebhookUrl") or ""
     local matchEndLatched = false
     local nextRewardClickAt = 0
     local overwriteConfirmUntil = 0
@@ -480,6 +495,57 @@ function Interface.new(deps)
     mainTab:Credit({
         Name = "polosa__",
         Description = "Anime Paradox X (v3.23)",
+    })
+
+    local webhookTab = window:Tab({ Name = "Webhook" })
+    local webhookStatus = webhookTab:Section("Discord webhook")
+
+    webhookTab:Textbox({
+        Name = "Webhook URL",
+        Placeholder = "https://discord.com/api/webhooks/...",
+        Text = webhookUrl,
+        Callback = function(text)
+            text = tostring(text or ""):match("^%s*(.-)%s*$")
+            webhookUrl = text
+            settings.Set("WebhookUrl", text)
+            webhookStatus.Text = text ~= ""
+                and "Webhook URL saved"
+                or "Webhook URL cleared"
+        end,
+    })
+
+    webhookTab:Toggle({
+        Name = "Send rewards to webhook",
+        StartingState = webhookEnabled,
+        Callback = function(state)
+            webhookEnabled = state
+            settings.Set("WebhookEnabled", state)
+        end,
+    })
+
+    webhookTab:Button({
+        Name = "Send test message",
+        Callback = function()
+            if webhookUrl == "" then
+                notify("Webhook", "Set the webhook URL first")
+                return
+            end
+
+            local ok, sendError = Webhook.SendEmbed(webhookUrl, {
+                title = "Anime Paradox X",
+                description = "Test message from the macro webhook tab.",
+                color = 0x5865F2,
+            })
+
+            webhookStatus.Text = ok
+                and "Test message sent"
+                or ("Test failed: " .. tostring(sendError))
+        end,
+    })
+
+    webhookTab:Credit({
+        Name = "polosa__",
+        Description = "Sends stage-end rewards to a Discord webhook",
     })
 
     local macroTab = window:Tab({ Name = "Macro" })
@@ -782,6 +848,40 @@ function Interface.new(deps)
         end)
     end
 
+    local function sendRewardsToWebhook()
+        if not webhookEnabled or webhookUrl == "" then
+            return
+        end
+
+        local lines, readError = RewardReader.GetRewardLines()
+        if #lines == 0 then
+            notify("Webhook", readError or "No rewards found", 4)
+            return
+        end
+
+        local outcome = RewardReader.GetOutcome() or "Unknown"
+        local macroLabel = playingName or selectedName or "manual"
+
+        local embedOk, embedError = Webhook.SendEmbed(webhookUrl, {
+            title = "Anime Paradox X",
+            color = outcome == "Victory" and 0x57F287 or 0xED4245,
+            fields = {
+                {
+                    name = "Result",
+                    value = outcome .. "\nMacro: " .. tostring(macroLabel),
+                },
+                {
+                    name = "Reward",
+                    value = table.concat(lines, "\n"),
+                },
+            },
+        })
+
+        if not embedOk then
+            notify("Webhook", embedError, 5)
+        end
+    end
+
     task.spawn(function()
         while window.Gui and window.Gui.Parent do
             local autoActionEnabled = autoNextEnabled or autoReplayEnabled
@@ -803,6 +903,7 @@ function Interface.new(deps)
                     matchEndLatched = true
                     player:Stop()
                     adapter:ResetRegistry()
+                    sendRewardsToWebhook()
 
                     local actionOk = true
                     local actionError = nil
@@ -849,6 +950,156 @@ function Interface.new(deps)
 end
 
 return Interface
+
+end)
+__bundle_register("src.Utils.RewardReader", function(require, _LOADED, __bundle_register, __bundle_modules)
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local RewardReader = {}
+
+local function trim(value)
+    if type(value) ~= "string" then return nil end
+    value = value:match("^%s*(.-)%s*$")
+    return value ~= "" and value or nil
+end
+
+-- Collects readable text from every TextLabel/TextButton under `instance`,
+-- deduplicated via `seen`, and appends new lines to `out` in encounter order.
+local function collectText(instance, out, seen)
+    for _, descendant in ipairs(instance:GetDescendants()) do
+        if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+            local text = trim(descendant.Text)
+            if text and not seen[text] then
+                seen[text] = true
+                out[#out + 1] = text
+            end
+        end
+    end
+end
+
+function RewardReader.GetStageEndWindow()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    local stageEndGui = playerGui and playerGui:FindFirstChild("StageEnd")
+    return stageEndGui and stageEndGui:FindFirstChild("StageEnd") or nil
+end
+
+-- Exact path requested: PlayerGui.StageEnd.StageEnd.LHS.RewardHolder.ScrollingFrame.Content
+function RewardReader.GetContentFrame()
+    local stageEndWindow = RewardReader.GetStageEndWindow()
+    local lhs = stageEndWindow and stageEndWindow:FindFirstChild("LHS")
+    local rewardHolder = lhs and lhs:FindFirstChild("RewardHolder")
+    local scrollingFrame = rewardHolder and rewardHolder:FindFirstChild("ScrollingFrame")
+    return scrollingFrame and scrollingFrame:FindFirstChild("Content") or nil
+end
+
+function RewardReader.GetOutcome()
+    local stageEndWindow = RewardReader.GetStageEndWindow()
+    if not stageEndWindow then return nil end
+
+    local victoryHeader = stageEndWindow:FindFirstChild("VictoryHeader", true)
+    local defeatHeader = stageEndWindow:FindFirstChild("DefeatHeader", true)
+
+    if victoryHeader and victoryHeader:IsA("GuiObject") and victoryHeader.Visible then
+        return "Victory"
+    end
+
+    if defeatHeader and defeatHeader:IsA("GuiObject") and defeatHeader.Visible then
+        return "Defeat"
+    end
+
+    return nil
+end
+
+-- Returns one line of text per reward entry found in Content, in LayoutOrder.
+function RewardReader.GetRewardLines()
+    local content = RewardReader.GetContentFrame()
+    if not content then
+        return {}, "Reward content frame is unavailable"
+    end
+
+    local entries = content:GetChildren()
+    table.sort(entries, function(a, b)
+        local ok, less = pcall(function()
+            return a.LayoutOrder < b.LayoutOrder
+        end)
+        return ok and less
+    end)
+
+    local lines, seen = {}, {}
+    for _, entry in ipairs(entries) do
+        if entry:IsA("GuiObject") then
+            collectText(entry, lines, seen)
+        end
+    end
+
+    if #lines == 0 then
+        return {}, "No reward text found"
+    end
+
+    return lines
+end
+
+return RewardReader
+
+end)
+__bundle_register("src.Utils.Webhook", function(require, _LOADED, __bundle_register, __bundle_modules)
+local HttpService = game:GetService("HttpService")
+
+local Webhook = {}
+
+local function getRequestFn()
+    if typeof(request) == "function" then return request end
+    if typeof(http_request) == "function" then return http_request end
+    if typeof(syn) == "table" and typeof(syn.request) == "function" then return syn.request end
+    if typeof(fluxus) == "table" and typeof(fluxus.request) == "function" then return fluxus.request end
+    return nil
+end
+
+-- Sends an arbitrary JSON payload to a Discord-compatible webhook URL.
+function Webhook.Send(url, payload)
+    if type(url) ~= "string" or url == "" then
+        return false, "Webhook URL is empty"
+    end
+
+    local requestFn = getRequestFn()
+    if not requestFn then
+        return false, "HTTP request API is unavailable on this executor"
+    end
+
+    local encodeOk, body = pcall(HttpService.JSONEncode, HttpService, payload)
+    if not encodeOk then
+        return false, "JSON encode failed: " .. tostring(body)
+    end
+
+    local ok, response = pcall(requestFn, {
+        Url = url,
+        Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = body,
+    })
+
+    if not ok then
+        return false, tostring(response)
+    end
+
+    local status = type(response) == "table"
+        and (response.StatusCode or response.Status)
+        or nil
+
+    if type(status) == "number" and (status < 200 or status >= 300) then
+        return false, "Discord responded with status " .. tostring(status)
+    end
+
+    return true
+end
+
+-- Convenience helper for sending a single Discord embed.
+function Webhook.SendEmbed(url, embed)
+    return Webhook.Send(url, { embeds = { embed } })
+end
+
+return Webhook
 
 end)
 __bundle_register("src.Macro.GameAdapter", function(require, _LOADED, __bundle_register, __bundle_modules)
